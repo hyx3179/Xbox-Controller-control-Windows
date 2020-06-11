@@ -26,15 +26,15 @@ key_map key_map_list[] = {
 
 DWORD WINAPI mpc_be_control_send(LPVOID lpParam) {
 
-    const char *fromdata = (const char*)lpParam;
+    const char *fromdata = (const char *)lpParam;
     CURL *curl = curl_easy_init();
     struct curl_slist *headerlist = NULL;
 
     headerlist = curl_slist_append(headerlist,
-        "Content-Type:application/x-www-form-urlencoded");
+                                   "Content-Type:application/x-www-form-urlencoded");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerlist);  // 设置表头
     curl_easy_setopt(curl, CURLOPT_URL,
-        "http://localhost:13579/command.html"); // 设置URL
+                     "http://localhost:13579/command.html"); // 设置URL
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fromdata); // 设置参数
     curl_easy_setopt(curl, CURLOPT_POST, 1); // 设置为Post
 
@@ -45,17 +45,19 @@ DWORD WINAPI mpc_be_control_send(LPVOID lpParam) {
     return 0;
 }
 
-void mouse(DWORD UserIndex) {
+DWORD WINAPI mouse(LPVOID lpParam) {
 
-    XINPUT_STATE state;
-    ZeroMemory(&state, sizeof(XINPUT_STATE));
+    XINPUT_STATE state = { 0 };
     XINPUT_STATE previous_state = state;
     WORD change = 0;
     INPUT input = { 0 };
+    DWORD UserIndex = (DWORD)lpParam;
 
     while (true)
     {
-        XInputGetState(UserIndex, &state);
+        if (XInputGetState(UserIndex, &state) != ERROR_SUCCESS) {
+            return -1;
+        }
         input.type = INPUT_MOUSE;
         input.mi.dx = state.Gamepad.sThumbLX / 4096;
         input.mi.dy = -state.Gamepad.sThumbLY / 4096;
@@ -72,8 +74,8 @@ void mouse(DWORD UserIndex) {
                             input.mi.dwFlags = input.mi.dwFlags | key_map_list[i].mouse_button_down;
                         }
                         else {
-                            CreateThread(NULL, 0, mpc_be_control_send, (LPVOID)key_map_list[i].mpc_be_control, 0, NULL);
-                            //mpc_be_control_send(key_map_list[i].mpc_be_control);
+                            CloseHandle(CreateThread(NULL, 0, mpc_be_control_send,
+                                                     (LPVOID)key_map_list[i].mpc_be_control, 0, NULL));
                         }
                     }
                     else
@@ -93,39 +95,38 @@ void mouse(DWORD UserIndex) {
         SendInput(1, &input, sizeof(INPUT));
         Sleep(3);
         previous_state = state;
-        ZeroMemory(&input, sizeof(INPUT));
     }
-}
-
-DWORD check_connection() {
-    DWORD dwResult;
-    for (DWORD i = 0; i < XUSER_MAX_COUNT; i++)
-    {
-        XINPUT_STATE state;
-        ZeroMemory(&state, sizeof(XINPUT_STATE));
-
-        dwResult = XInputGetState(i, &state);
-
-        if (dwResult == ERROR_SUCCESS)
-        {
-            return i;
-        }
-    }
-    return XUSER_MAX_COUNT + 1;
 }
 
 int main(void)
 {
     DWORD UserIndex = 0;
+    XINPUT_STATE state = { 0 };
+    HANDLE Thread_HANDLE[4] = { NULL };
+    DWORD ExitCode = 0;
+
     while (true)
     {
-        UserIndex = check_connection();
-        if (UserIndex != 5)
+        DWORD dwResult;
+        for (DWORD i = 0; i < XUSER_MAX_COUNT; i++)
         {
-            break;
-        }
-        Sleep(100);
-    }
+            dwResult = XInputGetState(i, &state);
 
-    mouse(UserIndex);
+            if (dwResult == ERROR_SUCCESS && Thread_HANDLE[i] == NULL)
+            {
+                Thread_HANDLE[i] = CreateThread(NULL, 0, mouse, (LPVOID)i, 0, NULL);
+            }
+            else {
+                if (Thread_HANDLE[i] != NULL)
+                {
+                    GetExitCodeThread(Thread_HANDLE[i], &ExitCode);
+                    if (ExitCode == -1) {
+                        CloseHandle(Thread_HANDLE[i]);
+                        Thread_HANDLE[i] = NULL;
+                    }
+                }
+            }
+        }
+        Sleep(1000);
+    }
 }
