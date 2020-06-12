@@ -7,6 +7,9 @@
 
 #define MOUSE 0
 #define MPC_BE 1
+#define BIT4 0x8
+
+DWORD status = 0;
 
 typedef struct KEY_MAP {
     int type;
@@ -55,7 +58,10 @@ DWORD WINAPI mouse(LPVOID lpParam) {
 
     while (true)
     {
-        if (XInputGetState(UserIndex, &state) != ERROR_SUCCESS) {
+        if (status) {
+            return 0;
+        }
+        if (XInputGetState(UserIndex, &state)) {
             return -1;
         }
         input.type = INPUT_MOUSE;
@@ -63,9 +69,9 @@ DWORD WINAPI mouse(LPVOID lpParam) {
         input.mi.dy = -state.Gamepad.sThumbLY / 4096;
         input.mi.dwFlags = MOUSEEVENTF_MOVE;
 
-        for (int i = 0; i < sizeof(key_map_list) / sizeof(key_map); i++)
+        if ((change = state.Gamepad.wButtons ^ previous_state.Gamepad.wButtons))
         {
-            if ((change = state.Gamepad.wButtons ^ previous_state.Gamepad.wButtons) > 0)
+            for (int i = 0; i < sizeof(key_map_list) / sizeof(key_map); i++)
             {
                 if ((change & key_map_list[i].gamepad_button) == key_map_list[i].gamepad_button) {
                     if ((previous_state.Gamepad.wButtons & key_map_list[i].gamepad_button) == 0) {
@@ -87,7 +93,7 @@ DWORD WINAPI mouse(LPVOID lpParam) {
                 }
             }
         }
-        if (state.Gamepad.sThumbRY * state.Gamepad.sThumbRY / 16572416 > 0)
+        if (state.Gamepad.sThumbRY * state.Gamepad.sThumbRY / 16777216 > 1)
         {
             input.mi.dwFlags = input.mi.dwFlags | MOUSEEVENTF_WHEEL;
             input.mi.mouseData = state.Gamepad.sThumbRY / 4096;
@@ -98,12 +104,48 @@ DWORD WINAPI mouse(LPVOID lpParam) {
     }
 }
 
+DWORD WINAPI examination(LPVOID lpParam) {
+
+    XINPUT_STATE state = { 0 };
+    DWORD UserIndex = (DWORD)lpParam;
+    DWORD exit_status = 0;
+    if (UserIndex & BIT4) {
+        UserIndex = UserIndex - BIT4;
+        exit_status = 1;
+    }
+    if (status) {
+        Sleep(5000);
+    }
+
+    while (true)
+    {
+        if (XInputGetState(UserIndex, &state)) {
+            return -1;
+        }
+        if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_DPAD_DOWN |
+                                       XINPUT_GAMEPAD_LEFT_SHOULDER |
+                                       XINPUT_GAMEPAD_RIGHT_SHOULDER)) == 0) {
+            Sleep(2000); 
+            XInputGetState(UserIndex, &state);
+            if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_DPAD_DOWN |
+                                           XINPUT_GAMEPAD_LEFT_SHOULDER |
+                                           XINPUT_GAMEPAD_RIGHT_SHOULDER)) == 0) {
+                return exit_status;
+            }
+        }
+        Sleep(50);
+    }
+}
+
+
 int main(void)
 {
     DWORD UserIndex = 0;
     XINPUT_STATE state = { 0 };
-    HANDLE Thread_HANDLE[4] = { NULL };
+    HANDLE mouse_HANDLE[4] = { NULL };
+    HANDLE examination_HANDLE[4] = { NULL };
     DWORD ExitCode = 0;
+
 
     while (true)
     {
@@ -112,17 +154,38 @@ int main(void)
         {
             dwResult = XInputGetState(i, &state);
 
-            if (dwResult == ERROR_SUCCESS && Thread_HANDLE[i] == NULL)
+            if (dwResult == ERROR_SUCCESS && mouse_HANDLE[i] == NULL)
             {
-                Thread_HANDLE[i] = CreateThread(NULL, 0, mouse, (LPVOID)i, 0, NULL);
+                status = 0;
+                mouse_HANDLE[i] = CreateThread(NULL, 0, mouse, (LPVOID)i, 0, NULL);
+                examination_HANDLE[i] = CreateThread(NULL, 0, examination, (LPVOID)i, 0, NULL);
             }
             else {
-                if (Thread_HANDLE[i] != NULL)
+                if (mouse_HANDLE[i] != NULL)
                 {
-                    GetExitCodeThread(Thread_HANDLE[i], &ExitCode);
+                    GetExitCodeThread(mouse_HANDLE[i], &ExitCode);
                     if (ExitCode == -1) {
-                        CloseHandle(Thread_HANDLE[i]);
-                        Thread_HANDLE[i] = NULL;
+                        CloseHandle(mouse_HANDLE[i]);
+                        mouse_HANDLE[i] = NULL;
+                    }
+                    GetExitCodeThread(examination_HANDLE[i], &ExitCode);
+                    switch (ExitCode)
+                    {
+                    case 1:
+                        CloseHandle(mouse_HANDLE[i]);
+                        mouse_HANDLE[i] = NULL;
+                        break;
+                    case 0:
+                        status = 1;
+                        CloseHandle(examination_HANDLE[i]); 
+                        examination_HANDLE[i] = CreateThread(NULL, 0, examination, (LPVOID)(i + BIT4), 0, NULL);
+                        break;
+                    case -1:
+                        CloseHandle(examination_HANDLE[i]);
+                        examination_HANDLE[i] = NULL;
+                        break;
+                    default:
+                        break;
                     }
                 }
             }
