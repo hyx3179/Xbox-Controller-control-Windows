@@ -2,12 +2,14 @@
 #include <curl/curl.h>
 #include <xinput.h>
 #include <winuser.h>
+#include <stdlib.h>
 
 #pragma comment( linker, "/subsystem:\"windows\" /entry:\"mainCRTStartup\"" )
 
 #define MOUSE 0
 #define MPC_BE 1
 #define BIT4 0x8
+#define ALLOW_LONG_DOWN 1
 
 DWORD status = 0;
 
@@ -22,13 +24,14 @@ typedef struct KEY_MAP {
 key_map key_map_list[] = {
     {MOUSE,XINPUT_GAMEPAD_A,MOUSEEVENTF_LEFTDOWN,MOUSEEVENTF_LEFTUP,""},
     {MOUSE,XINPUT_GAMEPAD_B,MOUSEEVENTF_RIGHTDOWN,MOUSEEVENTF_RIGHTUP,""},
+    {MPC_BE,XINPUT_GAMEPAD_DPAD_DOWN,0,0,"wm_command=830"},
     {MPC_BE,XINPUT_GAMEPAD_DPAD_UP,0,0,"wm_command=889"},
-    {MPC_BE,XINPUT_GAMEPAD_DPAD_LEFT,0,0,"wm_command=901"},
-    {MPC_BE,XINPUT_GAMEPAD_DPAD_RIGHT,0,0,"wm_command=902"},
-    {MPC_BE,XINPUT_GAMEPAD_LEFT_SHOULDER,0,0,"wm_command=921"},
-    {MPC_BE,XINPUT_GAMEPAD_RIGHT_SHOULDER,0,0,"wm_command=922"},
-    {MPC_BE,XINPUT_GAMEPAD_Y,0,0,"wm_command=830"}
-
+    {MPC_BE,XINPUT_GAMEPAD_DPAD_LEFT,ALLOW_LONG_DOWN,0,"wm_command=901"},
+    {MPC_BE,XINPUT_GAMEPAD_DPAD_RIGHT,ALLOW_LONG_DOWN,0,"wm_command=902"},
+    {MPC_BE,XINPUT_GAMEPAD_LEFT_SHOULDER | XINPUT_GAMEPAD_X,0,0,"wm_command=921"},
+    {MPC_BE,XINPUT_GAMEPAD_RIGHT_SHOULDER | XINPUT_GAMEPAD_X,0,0,"wm_command=922"},
+    {MPC_BE,XINPUT_GAMEPAD_LEFT_SHOULDER | XINPUT_GAMEPAD_Y,0,0,"wm_command=919"},
+    {MPC_BE,XINPUT_GAMEPAD_RIGHT_SHOULDER | XINPUT_GAMEPAD_Y,0,0,"wm_command=920"}
 };
 
 DWORD WINAPI mpc_be_control_send(LPVOID lpParam) {
@@ -52,13 +55,13 @@ DWORD WINAPI mpc_be_control_send(LPVOID lpParam) {
     return 0;
 }
 
-DWORD WINAPI mouse(LPVOID lpParam) {
+DWORD WINAPI handle(LPVOID lpParam) {
 
     XINPUT_STATE state = { 0 };
     XINPUT_STATE previous_state = state;
-    WORD change = 0;
     INPUT input = { 0 };
     DWORD UserIndex = (DWORD)lpParam;
+    DWORD down_time = 0;
 
     while (true)
     {
@@ -77,40 +80,72 @@ DWORD WINAPI mouse(LPVOID lpParam) {
                 return 1;
             }
         }
+
         input.type = INPUT_MOUSE;
+        input.mi.dwFlags = 0;
         input.mi.dx = state.Gamepad.sThumbLX / 4096;
         input.mi.dy = -state.Gamepad.sThumbLY / 4096;
-        input.mi.dwFlags = MOUSEEVENTF_MOVE;
 
-        if ((change = state.Gamepad.wButtons ^ previous_state.Gamepad.wButtons))
+        if (abs(input.mi.dx) + abs(input.mi.dy) > 0)
         {
-            for (int i = 0; i < sizeof(key_map_list) / sizeof(key_map); i++)
-            {
-                if ((change & key_map_list[i].gamepad_button) == key_map_list[i].gamepad_button) {
-                    if ((previous_state.Gamepad.wButtons & key_map_list[i].gamepad_button) == 0) {
-                        if (key_map_list[i].type == MOUSE)
-                        {
-                            input.mi.dwFlags = input.mi.dwFlags | key_map_list[i].mouse_button_down;
-                        }
-                        else {
-                            CloseHandle(CreateThread(NULL, 0, mpc_be_control_send,
-                                                     (LPVOID)key_map_list[i].mpc_be_control, 0, NULL));
-                        }
-                    }
-                    else
-                    {
-                        if (key_map_list[i].type == MOUSE) {
-                            input.mi.dwFlags = input.mi.dwFlags | key_map_list[i].mouse_button_up;
-                        }
-                    }
-                }
-            }
+            input.mi.dwFlags = input.mi.dwFlags | MOUSEEVENTF_MOVE;
         }
-        if (state.Gamepad.sThumbRY * state.Gamepad.sThumbRY / 16777216 > 1)
+
+        if (abs(state.Gamepad.sThumbRY) / 4096 > 0)
         {
             input.mi.dwFlags = input.mi.dwFlags | MOUSEEVENTF_WHEEL;
             input.mi.mouseData = state.Gamepad.sThumbRY / 4096;
         }
+
+        for (int i = 0; i < sizeof(key_map_list) / sizeof(key_map); i++)
+        {
+            switch (key_map_list[i].type)
+            {
+            case MOUSE:
+                if ((previous_state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) != 0) {
+                    if ((state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) == 0) {
+                        input.mi.dwFlags = input.mi.dwFlags | key_map_list[i].mouse_button_down;
+                    }
+                }
+                else
+                {
+                    if ((state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) != 0) {
+                        input.mi.dwFlags = input.mi.dwFlags | key_map_list[i].mouse_button_up;
+                    }
+                }
+                break;
+            case MPC_BE:
+                if ((previous_state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) != 0) {
+                    if ((state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) == 0) {
+                        CloseHandle(CreateThread(NULL, 0, mpc_be_control_send,
+                                                 (LPVOID)key_map_list[i].mpc_be_control, 0, NULL));
+                    }
+                }
+                else
+                {
+                    if ((state.Gamepad.wButtons ^ key_map_list[i].gamepad_button) == 0) {
+                        if (key_map_list[i].mouse_button_down)
+                        {
+                            down_time += 3;
+                            if (down_time > 150)
+                            {
+                                CloseHandle(CreateThread(NULL, 0, mpc_be_control_send,
+                                                         (LPVOID)key_map_list[i].mpc_be_control, 0, NULL));
+                                down_time = 0;
+                            }
+                        }
+                    }
+                    else {
+                        down_time = 0;
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+
+        }
+
         SendInput(1, &input, sizeof(INPUT));
         Sleep(3);
         previous_state = state;
@@ -170,7 +205,7 @@ int main(void)
             if (dwResult == ERROR_SUCCESS && mouse_HANDLE[i] == NULL)
             {
                 status = 0;
-                mouse_HANDLE[i] = CreateThread(NULL, 0, mouse, (LPVOID)i, 0, NULL);
+                mouse_HANDLE[i] = CreateThread(NULL, 0, handle, (LPVOID)i, 0, NULL);
                 examination_HANDLE[i] = CreateThread(NULL, 0, examination, (LPVOID)i, 0, NULL);
             }
             else {
