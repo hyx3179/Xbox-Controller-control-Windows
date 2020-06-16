@@ -24,7 +24,11 @@ key_map key_map_list[] = {
     {MOUSE,XINPUT_GAMEPAD_B,MOUSEEVENTF_RIGHTDOWN,MOUSEEVENTF_RIGHTUP,""},
     {MPC_BE,XINPUT_GAMEPAD_DPAD_UP,0,0,"wm_command=889"},
     {MPC_BE,XINPUT_GAMEPAD_DPAD_LEFT,0,0,"wm_command=901"},
-    {MPC_BE,XINPUT_GAMEPAD_DPAD_RIGHT,0,0,"wm_command=902"}
+    {MPC_BE,XINPUT_GAMEPAD_DPAD_RIGHT,0,0,"wm_command=902"},
+    {MPC_BE,XINPUT_GAMEPAD_LEFT_SHOULDER,0,0,"wm_command=921"},
+    {MPC_BE,XINPUT_GAMEPAD_RIGHT_SHOULDER,0,0,"wm_command=922"},
+    {MPC_BE,XINPUT_GAMEPAD_Y,0,0,"wm_command=830"}
+
 };
 
 DWORD WINAPI mpc_be_control_send(LPVOID lpParam) {
@@ -63,6 +67,15 @@ DWORD WINAPI mouse(LPVOID lpParam) {
         }
         if (XInputGetState(UserIndex, &state)) {
             return -1;
+        }
+        if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_LEFT_THUMB |
+                                       XINPUT_GAMEPAD_RIGHT_THUMB)) == 0) {
+            Sleep(2000);
+            XInputGetState(UserIndex, &state);
+            if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_LEFT_THUMB |
+                                           XINPUT_GAMEPAD_RIGHT_THUMB)) == 0) {
+                return 1;
+            }
         }
         input.type = INPUT_MOUSE;
         input.mi.dx = state.Gamepad.sThumbLX / 4096;
@@ -125,7 +138,7 @@ DWORD WINAPI examination(LPVOID lpParam) {
         if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_DPAD_DOWN |
                                        XINPUT_GAMEPAD_LEFT_SHOULDER |
                                        XINPUT_GAMEPAD_RIGHT_SHOULDER)) == 0) {
-            Sleep(2000); 
+            Sleep(2000);
             XInputGetState(UserIndex, &state);
             if ((state.Gamepad.wButtons ^ (XINPUT_GAMEPAD_DPAD_DOWN |
                                            XINPUT_GAMEPAD_LEFT_SHOULDER |
@@ -164,9 +177,15 @@ int main(void)
                 if (mouse_HANDLE[i] != NULL)
                 {
                     GetExitCodeThread(mouse_HANDLE[i], &ExitCode);
-                    if (ExitCode == -1) {
+                    switch (ExitCode)
+                    {
+                    case 1:
+                        return 0;
+                    case -1:
                         CloseHandle(mouse_HANDLE[i]);
                         mouse_HANDLE[i] = NULL;
+                    default:
+                        break;
                     }
                     GetExitCodeThread(examination_HANDLE[i], &ExitCode);
                     switch (ExitCode)
@@ -177,7 +196,7 @@ int main(void)
                         break;
                     case 0:
                         status = 1;
-                        CloseHandle(examination_HANDLE[i]); 
+                        CloseHandle(examination_HANDLE[i]);
                         examination_HANDLE[i] = CreateThread(NULL, 0, examination, (LPVOID)(i + BIT4), 0, NULL);
                         break;
                     case -1:
